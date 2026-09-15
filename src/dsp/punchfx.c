@@ -154,7 +154,18 @@ static const host_api_v1_t *g_host = NULL;
 
 /* ───────────────────────── Helpers ───────────────────────── */
 
-/* File-based logging — works from any thread including audio render */
+/* File-based debug logging — DISABLED by default (realtime safety).
+ *
+ * Every Schwung module entry point (create/destroy/set_param/get_param/
+ * process_block/on_midi) can run on the SPI audio-callback thread, where
+ * synchronous file I/O (fopen/fprintf/fclose) is forbidden — a blocking
+ * disk write can drop audio frames. So plog() is compiled out entirely:
+ * with PUNCHFX_DEBUG_LOG == 0 it is an inline no-op and ALL of PLOG_PATH,
+ * the format strings, and the fopen/fprintf/fclose calls drop from the
+ * binary. Flip the macro to 1 only for an off-device debug build. */
+#define PUNCHFX_DEBUG_LOG 0
+
+#if PUNCHFX_DEBUG_LOG
 #define PLOG_PATH "/data/UserData/schwung/punchfx_debug.log"
 static int plog_count = 0;
 
@@ -168,6 +179,9 @@ static void plog(const char *msg) {
         plog_count++;
     }
 }
+#else
+static inline void plog(const char *msg) { (void)msg; }
+#endif
 
 static inline float clampf(float x, float lo, float hi) {
     return x < lo ? lo : (x > hi ? hi : x);
@@ -926,9 +940,11 @@ static void v2_set_param(void *instance, const char *key, const char *val) {
         int slot = inst->shadow_ctrl[SHADOW_CTRL_UI_SLOT];
         if (slot <= 3 && inst->my_slot != slot) {
             inst->my_slot = slot;
+#if PUNCHFX_DEBUG_LOG
             char sbuf[64];
             snprintf(sbuf, sizeof(sbuf), "Slot assigned via ui_slot: %d (key=%s)", slot, key);
             plog(sbuf);
+#endif
         }
     }
 
@@ -939,9 +955,11 @@ static void v2_set_param(void *instance, const char *key, const char *val) {
             int slot = (int)v;
             if (slot >= 0 && slot <= 3) {
                 inst->my_slot = slot;
+#if PUNCHFX_DEBUG_LOG
                 char sbuf[64];
                 snprintf(sbuf, sizeof(sbuf), "Slot restored from state: %d", slot);
                 plog(sbuf);
+#endif
             }
         }
         if (json_get_float(val, "bpm", &v) == 0) {
@@ -1158,12 +1176,14 @@ static void *v2_create_instance(const char *module_dir, const char *config_json)
         plog("shadow-control shm_open failed — Shift detection disabled");
     }
 
+#if PUNCHFX_DEBUG_LOG
     char logbuf[128];
     snprintf(logbuf, sizeof(logbuf),
              "Instance created (%d BPM, %d spb, %.1f MB)",
              inst->bpm, inst->spb,
              (float)sizeof(punchfx_instance_t) / (1024.0f * 1024.0f));
     plog(logbuf);
+#endif
 
     return inst;
 }
